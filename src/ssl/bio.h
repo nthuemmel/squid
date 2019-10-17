@@ -202,6 +202,13 @@ private:
 
 } // namespace Ssl
 
+/// Returns OpenSSL's integer SSL version (e.g. TLS1_2_VERSION)
+/// for the given protocol version.
+/// If the given version ver is not a valid TLS version -
+/// or an unknown TLS version - the function returns zero.
+int protocolVersionToOpensslVersion(const AnyP::ProtocolVersion& ver);
+// TODO is there a better place for this function?
+
 void
 applyTlsDetailsToSSL(SSL *ssl, Security::TlsDetails::Pointer const &details, Ssl::BumpMode bumpMode);
 

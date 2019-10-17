@@ -90,7 +90,12 @@ Security::NegotiationHistory::retrieveParsedInfo(Security::TlsDetails::Pointer c
 {
     if (details) {
         helloVersion_ = details->tlsVersion;
-        supportedVersion_ = details->tlsSupportedVersion;
+        if (!details->tlsSupportedVersions.empty()) {
+            supportedVersion_ = *std::max_element(details->tlsSupportedVersions.begin(), details->tlsSupportedVersions.end());
+            // TODO maybe the reported supportedVersion_ should also be a vector instead of the max?
+        } else {
+            supportedVersion_ = AnyP::ProtocolVersion(); // empty
+        }
     }
 }
 

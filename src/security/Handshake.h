@@ -15,6 +15,7 @@
 #include "security/forward.h"
 
 #include <unordered_set>
+#include <vector>
 
 namespace Security
 {
@@ -29,7 +30,7 @@ public:
     std::ostream & print(std::ostream &os) const;
 
     AnyP::ProtocolVersion tlsVersion; ///< The TLS hello message version
-    AnyP::ProtocolVersion tlsSupportedVersion; ///< The requested/used TLS version
+    std::vector<AnyP::ProtocolVersion> tlsSupportedVersions; ///< The requested/used TLS version(s)
     bool compressionSupported; ///< The requested/used compressed  method
     SBuf serverName; ///< The SNI hostname, if any
     bool doHeartBeats;
@@ -94,8 +95,9 @@ private:
     void parseServerHelloHandshakeMessage(const SBuf &raw);
 
     bool parseCompressionMethods(const SBuf &raw);
-    void parseExtensions(const SBuf &raw);
+    void parseExtensions(const SBuf &raw, bool isClientHello);
     SBuf parseSniExtension(const SBuf &extensionData) const;
+    std::vector<AnyP::ProtocolVersion> parseSupportedVersionsExtension(const SBuf &extensionData, bool isClientHello) const;
 
     void parseCiphers(const SBuf &raw);
     void parseV23Ciphers(const SBuf &raw);

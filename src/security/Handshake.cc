@@ -354,7 +354,7 @@ Security::HandshakeParser::parseVersion2HandshakeMessage(const SBuf &raw)
     Parser::BinaryTokenizer tk(raw);
     Parser::BinaryTokenizerContext hello(tk, "V2ClientHello");
     Must(tk.uint8(".type") == hskClientHello); // Only client hello supported.
-    details->tlsSupportedVersion = ParseProtocolVersion(tk);
+    details->tlsSupportedVersions = {ParseProtocolVersion(tk)};
     const uint16_t ciphersLen = tk.uint16(".cipher_specs.length");
     const uint16_t sessionIdLen = tk.uint16(".session_id.length");
     const uint16_t challengeLen = tk.uint16(".challenge.length");
@@ -369,13 +369,13 @@ Security::HandshakeParser::parseClientHelloHandshakeMessage(const SBuf &raw)
 {
     Parser::BinaryTokenizer tk(raw);
     Parser::BinaryTokenizerContext hello(tk, "ClientHello");
-    details->tlsSupportedVersion = ParseProtocolVersion(tk);
+    details->tlsSupportedVersions = {ParseProtocolVersion(tk)};
     details->clientRandom = tk.area(HelloRandomSize, ".random");
     details->sessionId = tk.pstring8(".session_id");
     parseCiphers(tk.pstring16(".cipher_suites"));
     details->compressionSupported = parseCompressionMethods(tk.pstring8(".compression_methods"));
     if (!tk.atEnd()) // extension-free message ends here
-        parseExtensions(tk.pstring16(".extensions"));
+        parseExtensions(tk.pstring16(".extensions"), true);
     hello.success();
 }
 
@@ -395,7 +395,7 @@ Security::HandshakeParser::parseCompressionMethods(const SBuf &raw)
 }
 
 void
-Security::HandshakeParser::parseExtensions(const SBuf &raw)
+Security::HandshakeParser::parseExtensions(const SBuf &raw, bool isClientHello)
 {
     Parser::BinaryTokenizer tk(raw);
     while (!tk.atEnd()) {
@@ -424,6 +424,12 @@ Security::HandshakeParser::parseExtensions(const SBuf &raw)
         case 35: // SessionTicket TLS Extension; RFC 5077
             details->tlsTicketsExtension = true;
             details->hasTlsTicket = !extension.data.isEmpty();
+            break;
+        case 43: { // SupportedVersions TLS Extension; RFC 8446
+            // The supported versions from the extension override the one from the handshake message, as per extension definition
+            details->tlsSupportedVersions = parseSupportedVersionsExtension(extension.data, isClientHello);
+            break;
+        }
         case 13172: // Next Protocol Negotiation Extension (expired draft?)
         default:
             break;
@@ -466,13 +472,13 @@ Security::HandshakeParser::parseServerHelloHandshakeMessage(const SBuf &raw)
 {
     Parser::BinaryTokenizer tk(raw);
     Parser::BinaryTokenizerContext hello(tk, "ServerHello");
-    details->tlsSupportedVersion = ParseProtocolVersion(tk);
+    details->tlsSupportedVersions = {ParseProtocolVersion(tk)};
     tk.skip(HelloRandomSize, ".random");
     details->sessionId = tk.pstring8(".session_id");
     details->ciphers.insert(tk.uint16(".cipher_suite"));
     details->compressionSupported = tk.uint8(".compression_method") != 0; // not null
     if (!tk.atEnd()) // extensions present
-        parseExtensions(tk.pstring16(".extensions"));
+        parseExtensions(tk.pstring16(".extensions"), false);
     hello.success();
 }
 
@@ -502,6 +508,32 @@ Security::HandshakeParser::parseSniExtension(const SBuf &extensionData) const
         // according to RFC 6066, MUST begin with a 16-bit length field
     }
     return SBuf(); // SNI extension lacks host_name
+}
+
+// RFC 8446 Section 4.2.1: Supported Versions
+std::vector<AnyP::ProtocolVersion>
+Security::HandshakeParser::parseSupportedVersionsExtension(const SBuf &extensionData, bool isClientHello) const
+{
+    if (extensionData.isEmpty())
+        return std::vector<AnyP::ProtocolVersion>();
+
+    std::vector<AnyP::ProtocolVersion> result;
+    Parser::BinaryTokenizer tkExtension(extensionData);
+
+    if (isClientHello) {
+        // It's a client hello: The extension contains a (sparse) list of supported versions
+        result.reserve(2); // TODO Extract the length from the tokenizer to reserve?
+        // List contains up to 254 bytes (= up to 127 16-bit protocol versions)
+        Parser::BinaryTokenizer tkVersions(tkExtension.pstring8("SupportedVersions"));
+        while (!tkVersions.atEnd()) {
+            result.push_back(ParseProtocolVersion(tkVersions));
+        }
+    } else {
+        // It's a server hello: The extension contains exactly one chosen supported version
+        result = {ParseProtocolVersion(tkExtension)};
+    }
+
+    return result;
 }
 
 void

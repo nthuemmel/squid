@@ -14,6 +14,8 @@
 /* support.cc says this is needed */
 #if USE_OPENSSL
 
+#include <algorithm>
+
 #include "comm.h"
 #include "fd.h"
 #include "fde.h"
@@ -678,6 +680,39 @@ squid_ssl_info(const SSL *ssl, int where, int ret)
     }
 }
 
+int
+protocolVersionToOpensslVersion(const AnyP::ProtocolVersion& ver) {
+    switch (ver.protocol) {
+    case AnyP::PROTO_TLS:
+        switch (ver.major) {
+        case 1:
+            switch (ver.minor) {
+#if defined(TLS1_VERSION)
+            case 0:
+                return TLS1_VERSION;
+#endif
+#if defined(TLS1_1_VERSION)
+            case 1:
+                return TLS1_1_VERSION;
+#endif
+#if defined(TLS1_2_VERSION)
+            case 2:
+                return TLS1_2_VERSION;
+#endif
+#if defined(TLS1_3_VERSION)
+            case 3:
+                return TLS1_3_VERSION;
+#endif
+            }
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
 void
 applyTlsDetailsToSSL(SSL *ssl, Security::TlsDetails::Pointer const &details, Ssl::BumpMode bumpMode)
 {
@@ -689,6 +724,25 @@ applyTlsDetailsToSSL(SSL *ssl, Security::TlsDetails::Pointer const &details, Ssl
     // ClientHello message.
     // For example will prevent comunnicating with a tls1.0 server if the
     // client sent and tlsv1.2 Hello message.
+
+    // TODO above comment is obviously violated here
+    // To support cases similar to where the server has TLS 1.3,
+    // squid has TLS 1.3, but the client only has TLS 1.2
+    // we need to apply the client-supported TLS version as a maximum
+    // to the SSL session when peeking.
+    // Otherwise, squid's TLS implementation will detect the negotiated
+    // TLS version 1.2 as a protocol downgrade attack and close the connection.
+    if (bumpMode == Ssl::bumpPeek && !details->tlsSupportedVersions.empty()) {
+        // OpenSSL does not support sparse ranges for supported TLS versions.
+        // That's why we use the max. supported version instead.
+        AnyP::ProtocolVersion maxSupportedVersion =
+            *std::max_element(details->tlsSupportedVersions.begin(), details->tlsSupportedVersions.end());
+        int opensslTlsVersion = protocolVersionToOpensslVersion(maxSupportedVersion);
+        if (opensslTlsVersion != 0) {
+            SSL_set_max_proto_version(ssl, opensslTlsVersion);
+        }
+    }
+
 #if defined(TLSEXT_NAMETYPE_host_name)
     if (!details->serverName.isEmpty()) {
         SSL_set_tlsext_host_name(ssl, details->serverName.c_str());
